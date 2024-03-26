@@ -1,12 +1,21 @@
 from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, \
     QGraphicsSimpleTextItem, QHBoxLayout, QRadioButton, QGraphicsProxyWidget, \
-    QWidget, QPushButton, QLabel, QVBoxLayout, QLineEdit, QStackedLayout
+    QWidget, QPushButton, QLabel, QVBoxLayout, QLineEdit, QStackedLayout, \
+    QMainWindow
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, QPoint
 from PyQt6.QtGui import QPainter, QPen, QColor, QGuiApplication, QFont, \
     QTransform, QBrush
 import sys
 import math
 
+
+# def b_coef(x1, y1, x2, y2):
+#     return (x2 * y1 - x1 * y2)/(x2 - x1)
+#
+# def k_coef(x1, y1, x2, y2):
+#     if x1 == 0:
+#         return (y2 - b_coef(x1, y1, x2, y2))/x2
+#     return (y1 - b_coef(x1, y1, x2, y2))/x1
 
 class Widget(QWidget):
     def __init__(self, view):
@@ -17,8 +26,14 @@ class Widget(QWidget):
         self.layout.addWidget(self.view, stretch=6)
         self.resize(1400, 1000)
 
+        self.new_window_flag = False
+        self.speed_value = 1
+
         self.space_manager()
         self.setLayout(self.layout)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.move_to_start_def)
 
         self.center()
 
@@ -29,6 +44,7 @@ class Widget(QWidget):
         self.move(center_point - self.rect().center())
 
     def space_manager(self):
+        self.space = QVBoxLayout()
         self.rows = QHBoxLayout()
 
         self.agreement_row = QVBoxLayout()
@@ -41,13 +57,13 @@ class Widget(QWidget):
 
         coordinates_label = QLabel('Set the coordinates')
         self.coordinates = QLineEdit()
-        self.coordinates.setPlaceholderText('1.2, 3.5')
+        self.coordinates.setPlaceholderText('2, 5')
         self.coordinates_send = QPushButton('Set the coordinates')
         self.coordinates_send.clicked.connect(self.save_coordinates)
 
         label_speed = QLabel('Set speed')
         self.speed = QLineEdit()
-        self.speed.setPlaceholderText('1.5')
+        self.speed.setPlaceholderText('1')
         self.speed_send = QPushButton('Set a speed')
         self.speed_send.clicked.connect(self.save_speed)
 
@@ -80,6 +96,11 @@ class Widget(QWidget):
         self.to_start.clicked.connect(self.return_to_start)
         self.middle_row.addWidget(self.to_start)
 
+        self.connect_points = QPushButton('Connect the points')
+        self.connect_points.setChecked(False)
+        self.connect_points.clicked.connect(self.connect_points_def)
+        self.middle_row.addWidget(self.connect_points)
+
         self.clear_drawings = QPushButton('Clear all the drawings')
         self.clear_drawings.setChecked(False)
         self.clear_drawings.clicked.connect(self.clear_drawings_def)
@@ -94,25 +115,116 @@ class Widget(QWidget):
         self.drawing_mode.clicked.connect(self.drawing)
         self.modes_row.addWidget(self.drawing_mode)
 
-
-
         machine_mode = QPushButton('Machine mode')
 
         machine_mode.setChecked(False)
-        machine_mode.clicked.connect(self.machine_mode)
+        machine_mode.clicked.connect(self.machine_mode_def)
         self.modes_row.addWidget(machine_mode)
 
         self.rows.addLayout(self.modes_row, stretch=1)
 
-        self.layout.addLayout(self.rows, stretch=1)
+        self.space.addLayout(self.rows, stretch=6)
+
+        self.message_text = 'GTA VI alpha'
+        self.message_space = QVBoxLayout()
+        self.message_space.addWidget(QLabel(self.message_text))
+
+        self.space.addLayout(self.message_space, stretch=1)
+
+        self.layout.addLayout(self.space, stretch=1)
 
     def drawing(self, checked):
+        self.set_message_text(
+            'If you want to see all the points in machine mode, please, set a convenient zoom and position')
         return setattr(self.view, 'point_drawing_enabled', checked)
+
+    def set_message_text(self, text):
+        self.message_text = text
+        self.message_space.itemAt(0).widget().setText(self.message_text)
+
+    def machine_mode_def(self):
+        self.machine_view = self.view.working_view
+        if not self.new_window_flag:
+            self.new_window = QMainWindow()
+            self.new_window.central_widget = QWidget()
+            self.new_window.setCentralWidget(self.new_window.central_widget)
+            self.new_window.layout = QVBoxLayout()
+
+            self.new_window.layout.addWidget(self.machine_view)
+
+            self.new_window.new_rows = QHBoxLayout()
+
+            self.move_to_start = QPushButton('Move laser to first point')
+            self.move_to_start.setChecked(False)
+            self.move_to_start.clicked.connect(self.start_move_to_start_def)
+            self.new_window.new_rows.addWidget(self.move_to_start)
+
+            self.new_window.layout.addLayout(self.new_window.new_rows)
+            self.new_window.central_widget.setLayout(self.new_window.layout)
+
+            self.new_window.setWindowTitle('Working Machine')
+
+            self.new_window_flag = True
+        self.view.machine_mode_flag = True
+
+        if len(self.view.points):
+            self.machine_view.centerOn(0, 0)
+
+        self.view.update_grid()
+
+        if self.new_window.isVisible():
+            self.set_message_text('Machine mode window is shown!')
+        else:
+            self.view.machine_mode_flag = False
+            self.set_message_text(
+                'Такую игру будут делать около 50-ти лет, нужны будут миллиарды долларов, что бы воссоздать это!')
+
+        self.new_window.show()
+
+    def start_move_to_start_def(self):
+        self.current_progress = 0
+        self.timer.start(int(1000 / self.view.speed_value))
+    def move_to_start_def(self):
+        if not len(self.view.points):
+            self.set_message_text('Please, set the first point for processing')
+        else:
+            self.view.flag_move_to_start = True
+            if self.view.flag_move_to_start:
+                p2 = self.view.points[0]
+                p1 = QPoint(0, 0)
+                dx = abs(p2.x() - p1.x())
+                dy = abs(p2.y() - p1.y())
+                total_length = ((dx ** 2) + (dy ** 2)) ** 0.5
+                increment = total_length / 100
+                if self.current_progress < total_length:
+                    print(self.current_progress)
+                    new_point = QPointF(p1.x() + dx * self.current_progress / total_length,
+                                        p1.y() + dy * self.current_progress / total_length)
+                    print(new_point)
+                    if self.current_progress > 0:
+                        self.view.working_space.removeItem(self.view.laser_pos)
+                    self.view.laser_pos = self.view.working_space.addEllipse(
+                        new_point.x(), new_point.y(),
+                        6 / self.view.scale_factor, 6 / self.view.scale_factor,
+                        QPen(self.view.laser_off_color), QBrush(self.view.laser_off_color))
+                    self.current_progress += increment
+                else:
+                    self.timer.stop()
+            self.view.update_grid()
+            print('Amogus')
+
+    def connect_points_def(self):
+        self.view.connect_points_flag = True
+        self.view.update_grid()
+        self.set_message_text('The points on display are connected!')
 
     def clear_drawings_def(self):
         self.view.points.clear()
+        for p in self.view.working_points:
+            self.view.working_space.removeItem(p)
+        self.view.working_points.clear()
         self.view.update_grid()
-        print(self.view.points)
+        self.set_message_text('All drawings are deleted!')
 
     def return_to_start(self):
         self.view.resetTransform()
@@ -123,21 +235,22 @@ class Widget(QWidget):
         self.view.centerOn(0, 0)
         self.view.flag_tocenter = True
         self.view.update_grid()
+        self.set_message_text('Returned to start position!')
 
     def agreement(self, checked):
         i = 0 if checked else 1
         self.stacked_layout.setCurrentIndex(i)
 
     def save_speed(self):
-        self.speed_value = self.speed.text()
+        self.speed_value = int(self.speed.text())
+        self.view.speed_value = self.speed_value
+        self.set_message_text('Value for speed is saved!')
 
     def save_coordinates(self):
         self.coordinates_value = self.coordinates.text()
         x, y = (int(i) * self.view.grid_size for i in self.coordinates_value.split(', '))
         self.view.points.append(QPointF(x, -y))
-
-    def machine_mode(self):
-        pass
+        self.set_message_text('Value for coordinates is saved!')
 
 
 class GraphicsView(QGraphicsView):
@@ -147,17 +260,38 @@ class GraphicsView(QGraphicsView):
         self.setBackgroundBrush(QColor(24, 78, 119).rgb())
 
         self.grid_size = 25
+        self.speed_value = 1000
         self.lastPos = None
         self.scale_factor = 1
         self.order = 1
         self.last_s = 1
         self.flag_tocenter = False
+        self.connect_points_flag = False
+
+        self.working_space = QGraphicsScene()
+        self.working_view = QGraphicsView()
+
+        self.working_grid_color = Qt.GlobalColor.darkYellow
+        self.working_space_color = Qt.GlobalColor.black
+        self.laser_color = Qt.GlobalColor.red
+        self.laser_on_color = Qt.GlobalColor.green
+        self.laser_off_color = Qt.GlobalColor.gray
+
+        self.begin_point = QPoint(0, 0)
+        self.laser_pos = None
+
+        self.working_view.setBackgroundBrush(self.working_space_color)
+
+        self.working_view.setScene(self.working_space)
+        self.machine_mode_flag = False
+        self.flag_move_to_start = False
 
         # Distance between marked squares
         self.distance = 4
 
         self.axis_points = []
         self.points = []
+        self.working_points = []
         self.point_drawing_enabled = False
 
         # Set timer for updating a grid
@@ -205,6 +339,9 @@ class GraphicsView(QGraphicsView):
                 self.axis_points.append(text)
                 self.scene().addItem(text)
             self.scene().addLine(x, int(extended_rect.top()), x, int(extended_rect.bottom()), pen)
+            pen.setColor(self.working_grid_color)
+            self.working_space.addLine(x, int(extended_rect.top()), x, int(extended_rect.bottom()), pen)
+            pen.setColor(color)
 
         for y in range(int(extended_rect.top()) - int(extended_rect.top()) % self.grid_size,
                        int(extended_rect.bottom()), self.grid_size):
@@ -227,39 +364,59 @@ class GraphicsView(QGraphicsView):
                 self.axis_points.append(text)
                 self.scene().addItem(text)
             self.scene().addLine(int(extended_rect.left()), y, int(extended_rect.right()), y, pen)
+            pen.setColor(self.working_grid_color)
+            self.working_space.addLine(int(extended_rect.left()), y, int(extended_rect.right()), y, pen)
+            pen.setColor(color)
 
             # Draw points
         points_color = Qt.GlobalColor.red
+        line_pen = QPen(points_color)
+        line_pen.setWidth(int(6 / s))
         if len(self.points):
             for point in self.points:
-                self.scene().addEllipse(point.x(), point.y(), 4 / s, 4 / s, QPen(points_color),
+                self.scene().addEllipse(point.x(), point.y(), 6 / s, 6 / s, QPen(points_color),
                                         QBrush(points_color))
+                p = self.working_space.addEllipse(point.x(), point.y(), 6 / s, 6 / s, QPen(points_color),
+                                                  QBrush(points_color))
+                print(point)
+                self.working_points.append(p)
+
+        if not self.laser_pos:
+            self.laser_pos = self.working_space.addEllipse(self.begin_point.x(), self.begin_point.y(), 6 / s, 6 / s,
+                                                           QPen(self.laser_off_color), QBrush(self.laser_off_color))
+
+        if self.connect_points_flag:
+            for i in range(len(self.points) - 1):
+                line = self.scene().addLine(self.points[i].x(), self.points[i].y(),
+                                            self.points[i + 1].x(), self.points[i + 1].y())
+                line.setPen(line_pen)
+            self.connect_points_flag = False
+
         self.last_s = s
 
     def wheelEvent(self, event):
-        factor = 1.5  # zoom factor
-        if event.angleDelta().y() < 0:
-            factor = 1.0 / factor
-        if self.flag_tocenter:
-            self.flag_tocenter = False
-            self.scale_factor = 1
-        else:
-            self.scale_factor *= factor
-        self.scale(factor, factor)
-        self.update_grid()
-
+        if not self.machine_mode_flag:
+            factor = 1.5  # zoom factor
+            if event.angleDelta().y() < 0:
+                factor = 1.0 / factor
+            if self.flag_tocenter:
+                self.flag_tocenter = False
+                self.scale_factor = 1
+            else:
+                self.scale_factor *= factor
+            self.scale(factor, factor)
+            self.update_grid()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and not self.machine_mode_flag:
             self.lastPos = event.pos()
             if self.point_drawing_enabled:
                 point = self.mapToScene(event.pos())
                 self.points.append(point)
                 self.update_grid()
 
-
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton:
+        if event.buttons() == Qt.MouseButton.LeftButton and not self.machine_mode_flag:
             if not self.flag_tocenter:
                 delta = event.pos() - self.lastPos
                 self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
@@ -274,12 +431,10 @@ class GraphicsView(QGraphicsView):
 
     def update_grid(self):
         if self.flag_tocenter:
-
             self.centerOn(0, 0)
             self.mapToScene(0, 0)
         visible_rect = self.mapToScene(self.viewport().rect()).boundingRect()
         self.draw_grid(visible_rect)
-
 
     def resizeEvent(self, event):
         self.update_grid()
