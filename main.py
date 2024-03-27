@@ -6,16 +6,7 @@ from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, QPoint
 from PyQt6.QtGui import QPainter, QPen, QColor, QGuiApplication, QFont, \
     QTransform, QBrush
 import sys
-import math
 
-
-# def b_coef(x1, y1, x2, y2):
-#     return (x2 * y1 - x1 * y2)/(x2 - x1)
-#
-# def k_coef(x1, y1, x2, y2):
-#     if x1 == 0:
-#         return (y2 - b_coef(x1, y1, x2, y2))/x2
-#     return (y1 - b_coef(x1, y1, x2, y2))/x1
 
 class Widget(QWidget):
     def __init__(self, view):
@@ -27,13 +18,19 @@ class Widget(QWidget):
         self.resize(1400, 1000)
 
         self.new_window_flag = False
+        self.ready_to_draw = False
         self.speed_value = 1
+        self.current_pos = 0
 
         self.space_manager()
         self.setLayout(self.layout)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.move_to_start_def)
+        self.timer1 = QTimer()
+        self.timer1.timeout.connect(self.return_to_null_def)
+        self.timer2 = QTimer()
+        self.timer2.timeout.connect(self.drawing_lines_def)
 
         self.center()
 
@@ -159,6 +156,16 @@ class Widget(QWidget):
             self.move_to_start.clicked.connect(self.start_move_to_start_def)
             self.new_window.new_rows.addWidget(self.move_to_start)
 
+            self.return_to_null = QPushButton('Return laser to (0, 0)')
+            self.return_to_null.setChecked(False)
+            self.return_to_null.clicked.connect(self.start_return_to_null_def)
+            self.new_window.new_rows.addWidget(self.return_to_null)
+
+            self.drawing_lines = QPushButton('Draw lines')
+            self.drawing_lines.setChecked(False)
+            self.drawing_lines.clicked.connect(self.start_drawing_lines_def)
+            self.new_window.new_rows.addWidget(self.drawing_lines)
+
             self.new_window.layout.addLayout(self.new_window.new_rows)
             self.new_window.central_widget.setLayout(self.new_window.layout)
 
@@ -181,37 +188,97 @@ class Widget(QWidget):
 
         self.new_window.show()
 
+    def laser_off_moving(self, p1, p2, timer):
+        self.view.working_space.removeItem(self.view.laser_pos)
+        dx = (p2.x() - p1.x())
+        dy = (p2.y() - p1.y())
+        total_length = ((dx ** 2) + (dy ** 2)) ** 0.5
+        increment = total_length / 100
+        if self.current_progress < total_length:
+            new_point = QPointF(p1.x() + dx * self.current_progress / total_length,
+                                p1.y() + dy * self.current_progress / total_length)
+            if self.current_progress > 0:
+                self.view.working_space.removeItem(self.view.laser_pos)
+            self.view.laser_pos = self.view.working_space.addEllipse(
+                new_point.x(), new_point.y(),
+                6 / self.view.scale_factor, 6 / self.view.scale_factor,
+                QPen(self.view.laser_off_color), QBrush(self.view.laser_off_color))
+            self.current_progress += increment
+        else:
+            timer.stop()
+        self.view.update_grid()
+
+    def laser_on_moving(self, points, timer):
+        if self.current_pos != len(points) - 1:
+            p1 = points[self.current_pos]
+            p2 = points[self.current_pos + 1]
+            dx = (p2.x() - p1.x())
+            dy = (p2.y() - p1.y())
+            total_length = ((dx ** 2) + (dy ** 2)) ** 0.5
+            increment = total_length / 100
+            if self.current_progress < total_length:
+                self.new_point = QPointF(p1.x() + dx * self.current_progress / total_length,
+                                         p1.y() + dy * self.current_progress / total_length)
+                if self.current_progress > 0:
+                    self.view.working_space.removeItem(self.view.laser_pos)
+                    self.view.working_space.removeItem(self.view.line_item)
+                self.view.laser_pos = self.view.working_space.addEllipse(
+                    self.new_point.x(), self.new_point.y(),
+                    6 / self.view.scale_factor, 6 / self.view.scale_factor,
+                    QPen(self.view.laser_on_color), QBrush(self.view.laser_on_color))
+                self.view.line_item = self.view.working_space.addLine(p1.x(), p1.y(),
+                                                                      self.new_point.x(), self.new_point.y(),
+                                                                      QPen(self.view.laser_color))
+                self.current_progress += increment
+            else:
+                if self.current_pos == len(points) - 1:
+                    print(1)
+                    self.view.working_space.removeItem(self.view.laser_pos)
+                    self.view.laser_pos = self.view.working_space.addEllipse(
+                        self.new_point.x(), self.new_point.y(),
+                        6 / self.view.scale_factor, 6 / self.view.scale_factor,
+                        QPen(self.view.laser_off_color), QBrush(self.view.laser_off_color))
+                    self.timer.stop()
+                self.current_progress = 0
+                self.current_pos += 1
+            self.view.update_grid()
+
     def start_move_to_start_def(self):
         self.current_progress = 0
         self.timer.start(int(1000 / self.view.speed_value))
+
     def move_to_start_def(self):
         if not len(self.view.points):
             self.set_message_text('Please, set the first point for processing')
         else:
             self.view.flag_move_to_start = True
             if self.view.flag_move_to_start:
-                p2 = self.view.points[0]
-                p1 = QPoint(0, 0)
-                dx = abs(p2.x() - p1.x())
-                dy = abs(p2.y() - p1.y())
-                total_length = ((dx ** 2) + (dy ** 2)) ** 0.5
-                increment = total_length / 100
-                if self.current_progress < total_length:
-                    print(self.current_progress)
-                    new_point = QPointF(p1.x() + dx * self.current_progress / total_length,
-                                        p1.y() + dy * self.current_progress / total_length)
-                    print(new_point)
-                    if self.current_progress > 0:
-                        self.view.working_space.removeItem(self.view.laser_pos)
-                    self.view.laser_pos = self.view.working_space.addEllipse(
-                        new_point.x(), new_point.y(),
-                        6 / self.view.scale_factor, 6 / self.view.scale_factor,
-                        QPen(self.view.laser_off_color), QBrush(self.view.laser_off_color))
-                    self.current_progress += increment
-                else:
-                    self.timer.stop()
-            self.view.update_grid()
-            print('Amogus')
+                self.laser_off_moving(QPoint(0, 0), self.view.points[0], self.timer)
+                self.ready_to_draw = True
+
+    def start_return_to_null_def(self):
+        self.current_progress = 0
+        self.timer1.start(int(1000 / self.view.speed_value))
+
+    def return_to_null_def(self):
+        if not len(self.view.points):
+            self.set_message_text('Please, set the first point for processing')
+        else:
+            if self.ready_to_draw:
+                self.laser_off_moving(self.view.points[0], QPoint(0, 0), self.timer1)
+            else:
+                self.laser_off_moving(self.view.points[-1], QPoint(0, 0), self.timer1)
+
+    def start_drawing_lines_def(self):
+        self.current_progress = 0
+        self.timer2.start(int(1000 / self.view.speed_value))
+
+    def drawing_lines_def(self):
+        if not len(self.view.points):
+            self.set_message_text('Please, set the first point for processing')
+        else:
+            self.laser_on_moving(self.view.points, self.timer2)
+            self.ready_to_draw = False
 
     def connect_points_def(self):
         self.view.connect_points_flag = True
@@ -243,13 +310,14 @@ class Widget(QWidget):
 
     def save_speed(self):
         self.speed_value = int(self.speed.text())
-        self.view.speed_value = self.speed_value
+        self.view.speed_value = self.speed_value * self.view.grid_size
         self.set_message_text('Value for speed is saved!')
 
     def save_coordinates(self):
         self.coordinates_value = self.coordinates.text()
         x, y = (int(i) * self.view.grid_size for i in self.coordinates_value.split(', '))
         self.view.points.append(QPointF(x, -y))
+        self.view.update_grid()
         self.set_message_text('Value for coordinates is saved!')
 
 
@@ -260,7 +328,7 @@ class GraphicsView(QGraphicsView):
         self.setBackgroundBrush(QColor(24, 78, 119).rgb())
 
         self.grid_size = 25
-        self.speed_value = 1000
+        self.speed_value = self.grid_size
         self.lastPos = None
         self.scale_factor = 1
         self.order = 1
@@ -378,7 +446,6 @@ class GraphicsView(QGraphicsView):
                                         QBrush(points_color))
                 p = self.working_space.addEllipse(point.x(), point.y(), 6 / s, 6 / s, QPen(points_color),
                                                   QBrush(points_color))
-                print(point)
                 self.working_points.append(p)
 
         if not self.laser_pos:
