@@ -132,7 +132,7 @@ class MachineGrid(QGraphicsView):
         line_pen = QPen(points_color)
         line_pen.setWidth(int(6))
 
-        if not self.laser_off_flag and self.laser_in_center:
+        if self.laser_in_center:
             self.marked_point = self.scene.addEllipse(-2, -2, 6, 6,
                                                       QPen(Qt.GlobalColor.white), QBrush(Qt.GlobalColor.white))
         if len(list(chain.from_iterable(self.points))):
@@ -145,6 +145,7 @@ class MachineGrid(QGraphicsView):
                 self.scene.addItem(line)
 
         if not self.laser_off_flag and not self.laser_in_center:
+            self.scene.removeItem(self.marked_point)
             self.marked_point = self.scene.addEllipse(self.points[0].x() - 2, self.points[0].y() - 2, 6, 6,
                                                       QPen(Qt.GlobalColor.white), QBrush(Qt.GlobalColor.white))
 
@@ -249,14 +250,6 @@ class MachineGrid(QGraphicsView):
                 else:
                     self.timer1.start()
 
-    # def start_image_drawing(self):
-    #     if self.laser_on_flag:
-    #         self.current_progress = 0
-    #         self.current_segment = 0
-    #         self.timer3.start()
-    #
-    # def draw_image(self):
-
     def start_moving(self):
         if self.laser_off_flag:
             self.timer0.start()
@@ -268,7 +261,7 @@ class MachineGrid(QGraphicsView):
             dx = p2.x() - p1.x()
             dy = p2.y() - p1.y()
             total_length = ((dx ** 2) + (dy ** 2)) ** 0.5
-            increment = total_length * self.speed_val / 1000
+            increment = total_length * self.speed_val / 25000
 
             if self.current_progress < total_length:
                 self.scene.removeItem(self.marked_point)
@@ -291,10 +284,11 @@ class MachineGrid(QGraphicsView):
     def move_to_finish(self):
         p1 = self.points[-1][-1]
         p2 = QPointF(-2, -2)
+        print(p1, p2)
         dx = p2.x() - p1.x()
         dy = p2.y() - p1.y()
         total_length = ((dx ** 2) + (dy ** 2)) ** 0.5
-        increment = total_length * self.speed_val / 1000
+        increment = total_length * self.speed_val / 25000
 
         if self.current_progress < total_length:
             self.scene.removeItem(self.marked_point)
@@ -309,6 +303,11 @@ class MachineGrid(QGraphicsView):
             self.scene.removeItem(self.marked_point)
             self.marked_point = self.scene.addEllipse(self.new_point.x() - 2, self.new_point.y() - 2, 6, 6,
                                                       QPen(Qt.GlobalColor.white), QBrush(Qt.GlobalColor.white))
+            self.laser_in_center = True
+            self.timer.stop()
+            self.timer0.stop()
+            self.timer1.stop()
+            self.timer2.stop()
 
     def resizeEvent(self, event):
         self.grid_update()

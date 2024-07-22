@@ -2,15 +2,58 @@ from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, \
     QGraphicsSimpleTextItem, QHBoxLayout, QRadioButton, QGraphicsProxyWidget, \
     QWidget, QPushButton, QLabel, QVBoxLayout, QLineEdit, QStackedLayout, \
     QMainWindow, QSlider
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, QPoint, QRect, QSize
-from PyQt6.QtGui import QPainter, QPen, QColor, QGuiApplication, QFont, \
-    QTransform, QBrush
+from PyQt6.QtCore import Qt, QPointF
+
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from grid import Grid
 from working_grid import MachineGrid
 from photo_on_grid import *
 
 import sys
+import socket
+
+command = None
+
+server_running = True
+
+
+def start_server():
+    global server_running
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('localhost', 8889))
+    server_socket.listen(1)
+
+    print("Server started")
+
+    while server_running:
+        conn, addr = server_socket.accept()
+        try:
+            while server_running:
+                data = conn.recv(1024).decode()
+                if not data:
+                    break
+                if data == 'exit':
+                    server_running = False
+                    break
+                else:
+                    print(data)
+                    conn.send('DONE'.encode())
+        except ConnectionResetError:
+            print('CONNECTION RESET')
+        finally:
+            conn.close()
+    server_socket.close()
+    print("Server stopped")
+
+
+class ServerThread(QThread):
+    started = pyqtSignal()
+
+    def run(self):
+        # Запуск сервера
+        start_server()
+        self.started.emit()
 
 
 class ManagerApp(QWidget):
@@ -91,6 +134,7 @@ class ManagerApp(QWidget):
 
         self.button_machine_mode = QPushButton('Перейти к печати')
         self.button_machine_mode.clicked.connect(self.machine_mode)
+        self.button_machine_mode.setCheckable(True)
         self.right_row.addWidget(self.button_machine_mode)
 
         self.stacked_layout_ph = QStackedLayout()
@@ -123,13 +167,51 @@ class ManagerApp(QWidget):
 
         layout_buttons.addLayout(self.right_row, stretch=2)
 
+        global server_running
+        server_running = True
+
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        self.server_label = QLabel()
+
+        self.server_thread = ServerThread()
+        self.server_thread.started.connect(self.connect_to_server)
+        self.connect_to_server()
+        self.server_thread.start()
+
         self.layout.addLayout(layout_buttons)
-        self.message_text = 'GTA VI alpha'
+        self.message_text = ''
         self.message_space = QVBoxLayout()
         self.message_space.addWidget(QLabel(self.message_text))
+        self.message_space.addWidget(self.server_label)
         self.layout.addLayout(self.message_space)
 
+
+
         self.setLayout(self.layout)
+
+    def connect_to_server(self):
+        try:
+            self.client_socket.connect(('localhost', 8889))
+            self.server_label.setText("Подключено к серверу.")
+        except ConnectionRefusedError:
+            self.server_label.setText("Ошибка: Не удалось подключиться к серверу.")
+
+    def send_to_server(self, command):
+        if command:
+            try:
+                self.client_socket.sendall(command.encode())
+                response = self.client_socket.recv(1024).decode()
+                self.server_label.setText(f"Ответ от сервера: {response}")
+            except Exception as e:
+                self.server_label.setText(f"Ошибка при отправке команды: {str(e)}")
+        else:
+            self.server_label.setText("Команда пустая, нечего отправлять.")
+
+    def closeEvent(self, event):
+        global server_running
+        server_running = False
+        event.accept()
 
     def agreement(self, checked):
         i = 0 if checked else 1
@@ -138,9 +220,15 @@ class ManagerApp(QWidget):
     def save_coordinates(self):
         self.coordinates_value = self.coordinates.text()
         x, y = (int(i) * self.grid.grid_size for i in self.coordinates_value.split(', '))
-        self.grid.points.append(QPointF(x, -y))
+        if not self.grid.points:
+            self.grid.points.append([])
+            self.grid.lines.append([])
+            self.grid.last_num_of_drawn_lines.append([1])
+        self.grid.points[-1].append(QPointF(x, -y))
         self.grid.grid_update()
-        self.set_message_text('Координаты сохранены!')
+        print(self.grid.points)
+        self.set_message_text('({0}, {1}) координаты сохранены!'.format(x // 25, y // 25))
+        return setattr(self.grid, 'drawing_mode_flag', True)
 
     def save_path_photo(self):
         try:
@@ -161,7 +249,7 @@ class ManagerApp(QWidget):
         self.message_space.itemAt(0).widget().setText(self.message_text)
 
     def start_drawing_mode(self, checked):
-        self.set_message_text('Абоба')
+        self.set_message_text('Можете отмечать точки')
         if checked:
             self.grid.points.append([])
             self.grid.lines.append([])
@@ -170,6 +258,7 @@ class ManagerApp(QWidget):
         return setattr(self.grid, 'drawing_mode_flag', checked)
 
     def delete_points(self):
+        print(self.grid.points)
         self.grid.points.clear()
         self.grid.lines.clear()
         self.grid.last_num_of_drawn_lines.clear()
@@ -180,16 +269,16 @@ class ManagerApp(QWidget):
         self.set_message_text('Поле очищено!')
 
     def delete_last_point(self):
-        if len(self.grid.points[self.grid.drawing_mode_times-1]) != 0:
-            self.grid.points[self.grid.drawing_mode_times-1].pop(-1)
+        if len(self.grid.points[self.grid.drawing_mode_times - 1]) != 0:
+            self.grid.points[self.grid.drawing_mode_times - 1].pop(-1)
         else:
             self.grid.points.pop(-1)
             self.grid.lines.pop(-1)
             self.grid.last_num_of_drawn_lines.pop(-1)
             self.grid.drawing_mode_times -= 1
-            self.grid.points[self.grid.drawing_mode_times-1].pop(-1)
-        if self.grid.points:
-            self.machine_mode_window.grid.points = self.grid.points
+            self.grid.points[self.grid.drawing_mode_times - 1].pop(-1)
+        # if self.grid.points:
+        #     self.machine_mode_window.grid.points = self.grid.points
         self.grid.grid_update()
         self.set_message_text('Последняя точка удалена!')
 
@@ -197,13 +286,22 @@ class ManagerApp(QWidget):
         self.grid.draw_line_flag = True
         self.grid.grid_update()
 
-    def machine_mode(self):
+    def machine_mode(self, checked):
         self.machine_mode_window = MachineManager()
-        self.machine_mode_window.grid.points = self.grid.points
-        if self.machine_mode_window.grid.points:
-            self.machine_mode_window.show()
+        if checked or not self.machine_mode_window.flag_is_closed:
+            self.button_machine_mode.setCheckable(False)
+            self.button_drawing_mode.setCheckable(False)
+            self.machine_mode_window.grid.points = self.grid.points
+            if self.machine_mode_window.message_to_server:
+                self.send_to_server(self.machine_mode_window.message_to_server)
+            if self.machine_mode_window.grid.points:
+                self.machine_mode_window.show()
+            else:
+                self.set_message_text('Пожалуйста, укажите точки для печати')
         else:
-            self.set_message_text('Пожалуйста, укажите точки для печати')
+            self.button_drawing_mode.setCheckable(True)
+            self.button_machine_mode.setCheckable(True)
+            self.button_machine_mode.setDown(False)
 
 
 class MachineManager(QWidget):
@@ -212,9 +310,13 @@ class MachineManager(QWidget):
 
         self.setWindowTitle('Machine Mode')
 
+        self.flag_is_closed = False
+
         self.center_of_screen = QApplication.primaryScreen().geometry().center()
         self.center_of_window = self.rect().center()
         self.center = (self.center_of_screen - self.center_of_window)
+
+        self.message_to_server = None
 
         self.resize(900, 600)
 
@@ -271,22 +373,34 @@ class MachineManager(QWidget):
         layout_buttons.addLayout(work_management, stretch=2)
 
         layout.addLayout(layout_buttons)
+
         self.setLayout(layout)
 
     def move_to_start(self):
         self.grid.laser_off_flag = True
         self.grid.laser_in_center = False
+        self.button_move_to_start.setEnabled(False)
         self.grid.start_moving()
+        command = 'MOVE TO START'
+        self.message_to_server = command
+
 
     def move_to_finish(self):
         self.grid.laser_off_flag = True
         self.grid.finish_moving()
+        self.grid.laser_in_center = True
+        self.button_move_to_finish.setEnabled(False)
+        command = 'MOVE TO FINISH'
+        self.message_to_server = command
 
     def start(self):
         if self.grid.laser_off_flag:
+            self.button_start.setEnabled(False)
             self.grid.laser_on_flag = True
             self.grid.laser_off_flag = False
             self.grid.start_drawing()
+            command = 'START WORK'
+            self.message_to_server = command
 
     def stop(self, checked):
         if checked:
@@ -297,6 +411,9 @@ class MachineManager(QWidget):
             self.grid.laser_stop = False
             self.grid.drawing_line()
             self.grid.timer1.start()
+        command = 'STOP'
+        self.message_to_server = command
+
 
     def start_draw_image(self):
         if self.grid.laser_off_flag:
@@ -304,12 +421,17 @@ class MachineManager(QWidget):
             self.grid.laser_in_center = False
             self.grid.laser_off_flag = False
             self.grid.image_drawing()
+            command = 'START DRAWING'
+            self.message_to_server = command
+
 
     def slider_change_speed(self, value):
         value = (value // 10) * 10
         self.slider_speed.setValue(value)
         self.grid.speed_val = self.slider_speed.value()
         self.speed_label.setText(f'Установите скорость от 1 до 100: {self.slider_speed.value()}')
+        command = F'SET SPEED {self.slider_speed.value()}'
+        self.message_to_server = command
 
     def slider_change_speed_agreement(self, checked):
         if checked:
@@ -324,8 +446,13 @@ class MachineManager(QWidget):
             value = (value // 10) * 10
             self.slider_speed.setValue(value)
 
+    def closeEvent(self, event):
+        self.flag_is_closed = True
+        self.message_to_server = None
+        super().closeEvent(event)
+
 
 app = QApplication(sys.argv)
 window = ManagerApp()
 window.show()
-app.exec()
+sys.exit(app.exec())
